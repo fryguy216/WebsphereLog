@@ -3,7 +3,6 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 # --- Define the Regular Expression ---
-# The (?m) at the start enables multiline mode, which is crucial for this regex to work.
 $logRegex = '(?m)^\[(?<timestamp>\d{1,2}\/\d{1,2}\/\d{2}\s\d{1,2}:\d{2}:\d{2}:\d{3}\s[A-Z]{3})\]\s+(?<thread>[0-9a-fA-F]+)\s+(?<logger>\S+)\s+(?<level>[A-Z])\s+(?<message>[\s\S]+?)(?=\n^\[\d{1,2}\/\d{1,2}\/\d{2}|\Z)'
 
 # --- Build the Main Form (Window) ---
@@ -20,16 +19,14 @@ $button.AutoSize = $true
 
 # --- Create the ListView (Grid View) ---
 $listView = New-Object System.Windows.Forms.ListView
-$listView.View = 'Details' # This enables the grid-like view
+$listView.View = 'Details'
 $listView.GridLines = $true
 $listView.FullRowSelect = $true
 $listView.Location = New-Object System.Drawing.Point(10, 45)
-# Set the size relative to the form, leaving space for the button
 $listView.Size = New-Object System.Drawing.Size(($form.ClientSize.Width - 20), ($form.ClientSize.Height - 60))
-# Anchor the listview to all sides so it resizes with the window
 $listView.Anchor = 'Top, Bottom, Left, Right'
 
-# --- Define the Columns for the ListView ---
+# Define the Columns for the ListView
 $listView.Columns.Add("Timestamp", 160) | Out-Null
 $listView.Columns.Add("Thread ID", 100) | Out-Null
 $listView.Columns.Add("Logger", 150) | Out-Null
@@ -38,57 +35,60 @@ $listView.Columns.Add("Message", 700) | Out-Null
 
 # --- Define the Action for the Button Click ---
 $button.Add_Click({
-    # Create the file dialog
     $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
     $openFileDialog.Title = "Select a WebSphere Log File"
     $openFileDialog.Filter = "Log Files (*.log)|*.log|Output Files (*.out)|*.out|All files (*.*)|*.*"
 
-    # Show the dialog and check if the user clicked "OK"
     if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         $filePath = $openFileDialog.FileName
         
-        # Clear any previous results from the list view
         $listView.Items.Clear()
-        $form.Text = "Parsing: $filePath" # Update window title
+        $form.Text = "Parsing: $filePath"
         
         try {
-            # Read the entire file content at once
             $content = Get-Content -Path $filePath -Raw
-            
-            # Find all matches using the regex
             $matches = [regex]::Matches($content, $logRegex)
             
-            # Use BeginUpdate/EndUpdate for much faster loading
-            $listView.BeginUpdate()
+            # Counter to track when to update the UI
+            $updateCounter = 0
 
             foreach ($match in $matches) {
                 # Create a new row (ListViewItem)
                 $item = New-Object System.Windows.Forms.ListViewItem($match.Groups['timestamp'].Value)
                 
-                # Add the other fields as sub-items (columns)
+                # Add the other fields
                 $item.SubItems.Add($match.Groups['thread'].Value) | Out-Null
                 $item.SubItems.Add($match.Groups['logger'].Value) | Out-Null
                 $item.SubItems.Add($match.Groups['level'].Value) | Out-Null
-                $item.SubItems.Add($match.Groups['message'].Value.Trim()) | Out-Null # Trim whitespace from the message
+                $item.SubItems.Add($match.Groups['message'].Value.Trim()) | Out-Null
                 
                 # Add the completed row to the list view
                 $listView.Items.Add($item) | Out-Null
+                
+                # --- NEW: This is the responsiveness logic ---
+                $updateCounter++
+                # Every 100 records, force the UI to update
+                if ($updateCounter % 100 -eq 0) {
+                    # Update the window title with the current count
+                    $form.Text = "Parsing... $($listView.Items.Count) records found"
+                    # Process pending UI events to make the new records appear
+                    [System.Windows.Forms.Application]::DoEvents()
+                }
             }
         }
         catch {
             [System.Windows.Forms.MessageBox]::Show("An error occurred while reading or parsing the file: `n$($_.Exception.Message)", "Error", "OK", "Error")
         }
         finally {
-            $listView.EndUpdate()
+            # Final update to the window title
             $form.Text = "PowerShell WebSphere Log Parser - $($matches.Count) records loaded"
         }
     }
 })
 
-# --- Add the Controls to the Form ---
+# Add the Controls to the Form
 $form.Controls.Add($button)
 $form.Controls.Add($listView)
 
-# --- Show the Form ---
-# The [void] cast prevents unwanted status output to the console.
+# Show the Form
 [void]$form.ShowDialog()
